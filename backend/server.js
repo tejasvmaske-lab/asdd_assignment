@@ -18,73 +18,7 @@ const DB_CONFIG = {
   database: process.env.DB_NAME || 'campus_service_db',
 };
 
-const state = {
-  mode: 'demo',
-  pool: null,
-};
-
-const demoUsers = [
-  {
-    id: 1,
-    name: 'Campus Admin',
-    email: 'admin@campuscare.edu',
-    password: bcrypt.hashSync('admin123', 10),
-    role: 'admin',
-    department: 'Administrative Office',
-    studentId: null,
-  },
-  {
-    id: 2,
-    name: 'Aisha Sharma',
-    email: 'student@campuscare.edu',
-    password: bcrypt.hashSync('student123', 10),
-    role: 'student',
-    department: null,
-    studentId: 'STU-2025-101',
-  },
-];
-
-const demoRequests = [
-  {
-    id: 1,
-    userId: 2,
-    title: 'Projector not working in seminar hall',
-    category: 'Classroom',
-    location: 'Main Auditorium',
-    description: 'The projector is flickering and audio output is also failing during lectures.',
-    priority: 'High',
-    status: 'in_progress',
-    assignedTo: 'AV Support Team',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 2,
-    userId: 2,
-    title: 'Broken tap in hostel washroom',
-    category: 'Maintenance',
-    location: 'Hostel Block B',
-    description: 'The water tap is leaking and making noise continuously. Needs urgent repair.',
-    priority: 'Medium',
-    status: 'open',
-    assignedTo: null,
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000).toISOString(),
-  },
-  {
-    id: 3,
-    userId: 2,
-    title: 'Wi-Fi slow in library',
-    category: 'IT / Network',
-    location: 'Central Library',
-    description: 'Students are unable to connect to the library Wi-Fi during peak hours.',
-    priority: 'High',
-    status: 'resolved',
-    assignedTo: 'IT Helpdesk',
-    createdAt: new Date(Date.now() - 120000000).toISOString(),
-    updatedAt: new Date(Date.now() - 60000000).toISOString(),
-  },
-];
+let pool;
 
 app.use(cors());
 app.use(express.json());
@@ -113,218 +47,148 @@ function buildToken(user) {
   );
 }
 
-async function getDbPool() {
-  if (!state.pool) {
-    return null;
-  }
-  return state.pool;
-}
-
 async function initializeDatabase() {
-  try {
-    const connection = await mysql.createConnection({
-      host: DB_CONFIG.host,
-      port: DB_CONFIG.port,
-      user: DB_CONFIG.user,
-      password: DB_CONFIG.password,
-      multipleStatements: true,
-    });
+  while (true) {
+    let connection;
+    let candidatePool;
 
-    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_CONFIG.database}\``);
-    await connection.end();
+    try {
+      connection = await mysql.createConnection({
+        host: DB_CONFIG.host,
+        port: DB_CONFIG.port,
+        user: DB_CONFIG.user,
+        password: DB_CONFIG.password,
+        multipleStatements: true,
+      });
 
-    const pool = mysql.createPool({
-      host: DB_CONFIG.host,
-      port: DB_CONFIG.port,
-      user: DB_CONFIG.user,
-      password: DB_CONFIG.password,
-      database: DB_CONFIG.database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-    });
+      await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_CONFIG.database}\``);
+      await connection.end();
+      connection = null;
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(120) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role ENUM('student', 'admin') NOT NULL DEFAULT 'student',
-        department VARCHAR(100),
-        studentId VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+      candidatePool = mysql.createPool({
+        host: DB_CONFIG.host,
+        port: DB_CONFIG.port,
+        user: DB_CONFIG.user,
+        password: DB_CONFIG.password,
+        database: DB_CONFIG.database,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+      });
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS requests (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        userId INT NOT NULL,
-        title VARCHAR(200) NOT NULL,
-        category VARCHAR(80) NOT NULL,
-        location VARCHAR(160) NOT NULL,
-        description TEXT NOT NULL,
-        priority VARCHAR(30) NOT NULL DEFAULT 'Medium',
-        status VARCHAR(30) NOT NULL DEFAULT 'open',
-        assignedTo VARCHAR(120),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (userId) REFERENCES users(id)
-      )
-    `);
+      await candidatePool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          email VARCHAR(120) UNIQUE NOT NULL,
+          password VARCHAR(255) NOT NULL,
+          role ENUM('student', 'admin') NOT NULL DEFAULT 'student',
+          department VARCHAR(100),
+          studentId VARCHAR(50),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-    const [userRows] = await pool.query('SELECT id FROM users WHERE email = ?', ['admin@campuscare.edu']);
-    if (!userRows.length) {
-      await pool.query(
-        `INSERT INTO users (name, email, password, role, department) VALUES (?, ?, ?, 'admin', ?)`,
-        ['Campus Admin', 'admin@campuscare.edu', bcrypt.hashSync('admin123', 10), 'Administrative Office']
+      await candidatePool.query(`
+        CREATE TABLE IF NOT EXISTS requests (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NOT NULL,
+          title VARCHAR(200) NOT NULL,
+          category VARCHAR(80) NOT NULL,
+          location VARCHAR(160) NOT NULL,
+          description TEXT NOT NULL,
+          priority VARCHAR(30) NOT NULL DEFAULT 'Medium',
+          status VARCHAR(30) NOT NULL DEFAULT 'open',
+          assignedTo VARCHAR(120),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (userId) REFERENCES users(id)
+        )
+      `);
+
+      const [userRows] = await candidatePool.query(
+        'SELECT id FROM users WHERE email = ?',
+        ['admin@campuscare.edu']
       );
-    }
+      if (!userRows.length) {
+        await candidatePool.query(
+          `INSERT INTO users (name, email, password, role, department) VALUES (?, ?, ?, 'admin', ?)`,
+          ['Campus Admin', 'admin@campuscare.edu', bcrypt.hashSync('admin123', 10), 'Administrative Office']
+        );
+      }
 
-    state.mode = 'mysql';
-    state.pool = pool;
-    console.log('MySQL database ready.');
-  } catch (error) {
-    state.mode = 'demo';
-    console.warn('MySQL unavailable. Demo mode will be used instead.', error.message);
+      pool = candidatePool;
+      console.log('MySQL database ready.');
+      return;
+    } catch (error) {
+      if (connection) {
+        await connection.end();
+      }
+      if (candidatePool) {
+        await candidatePool.end();
+      }
+      console.error(`MySQL not ready at ${DB_CONFIG.host}:${DB_CONFIG.port}; retrying in 2 seconds.`, error.message);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
   }
 }
 
 async function findUserByEmail(email) {
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
-    return rows[0] || null;
-  }
-
-  return demoUsers.find((user) => user.email.toLowerCase() === email.toLowerCase()) || null;
+  const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+  return rows[0] || null;
 }
 
 async function findUserById(id) {
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
-    return rows[0] || null;
-  }
-
-  return demoUsers.find((user) => user.id === Number(id)) || null;
+  const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+  return rows[0] || null;
 }
 
 async function getRequestsForUser(userId, isAdmin = false) {
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    if (isAdmin) {
-      const [rows] = await pool.query('SELECT * FROM requests ORDER BY created_at DESC');
-      return rows;
-    }
-
-    const [rows] = await pool.query('SELECT * FROM requests WHERE userId = ? ORDER BY created_at DESC', [userId]);
+  if (isAdmin) {
+    const [rows] = await pool.query('SELECT * FROM requests ORDER BY created_at DESC');
     return rows;
   }
 
-  if (isAdmin) {
-    return demoRequests.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }
-
-  return demoRequests.filter((request) => request.userId === Number(userId));
+  const [rows] = await pool.query('SELECT * FROM requests WHERE userId = ? ORDER BY created_at DESC', [userId]);
+  return rows;
 }
 
 async function getRequestById(id) {
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [id]);
-    return rows[0] || null;
-  }
-
-  return demoRequests.find((request) => request.id === Number(id)) || null;
+  const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [id]);
+  return rows[0] || null;
 }
 
 async function createRequest({ userId, title, category, location, description, priority }) {
   const finalPriority = priority || 'Medium';
-
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    const [result] = await pool.query(
-      `INSERT INTO requests (userId, title, category, location, description, priority, status, assignedTo)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', NULL)`,
-      [userId, title, category, location, description, finalPriority]
-    );
-    const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [result.insertId]);
-    return rows[0];
-  }
-
-  const newId = demoRequests.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1;
-  const newRequest = {
-    id: newId,
-    userId: Number(userId),
-    title,
-    category,
-    location,
-    description,
-    priority: finalPriority,
-    status: 'open',
-    assignedTo: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  demoRequests.unshift(newRequest);
-  return newRequest;
+  const [result] = await pool.query(
+    `INSERT INTO requests (userId, title, category, location, description, priority, status, assignedTo)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', NULL)`,
+    [userId, title, category, location, description, finalPriority]
+  );
+  const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [result.insertId]);
+  return rows[0];
 }
 
 async function updateRequestStatus(id, status, assignedTo) {
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    await pool.query(
-      'UPDATE requests SET status = ?, assignedTo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [status, assignedTo || null, id]
-    );
-    const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [id]);
-    return rows[0] || null;
-  }
-
-  const entry = demoRequests.find((request) => request.id === Number(id));
-  if (!entry) {
-    return null;
-  }
-
-  entry.status = status;
-  if (assignedTo) {
-    entry.assignedTo = assignedTo;
-  }
-  entry.updatedAt = new Date().toISOString();
-  return entry;
+  await pool.query(
+    'UPDATE requests SET status = ?, assignedTo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [status, assignedTo || null, id]
+  );
+  const [rows] = await pool.query('SELECT * FROM requests WHERE id = ?', [id]);
+  return rows[0] || null;
 }
 
 async function createUser({ name, email, password, role = 'student', department = null, studentId = null }) {
   const normalizedEmail = String(email).trim().toLowerCase();
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  if (state.mode === 'mysql') {
-    const pool = await getDbPool();
-    const [result] = await pool.query(
-      `INSERT INTO users (name, email, password, role, department, studentId) VALUES (?, ?, ?, ?, ?, ?)`,
-      [name, normalizedEmail, hashedPassword, role, department, studentId]
-    );
+  const [result] = await pool.query(
+    `INSERT INTO users (name, email, password, role, department, studentId) VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, normalizedEmail, hashedPassword, role, department, studentId]
+  );
 
-    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
-    return rows[0];
-  }
-
-  const newId = demoUsers.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1;
-  const newUser = {
-    id: newId,
-    name,
-    email: normalizedEmail,
-    password: hashedPassword,
-    role,
-    department,
-    studentId,
-  };
-
-  demoUsers.push(newUser);
-  return newUser;
+  const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+  return rows[0];
 }
 
 async function getStats() {
@@ -362,12 +226,22 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    mode: state.mode,
-    message: 'CampusCare backend is running.',
-  });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    return res.json({
+      status: 'ok',
+      mode: 'mysql',
+      message: 'CampusCare backend is connected to MySQL.',
+    });
+  } catch (error) {
+    console.error('MySQL health check failed:', error.message);
+    return res.status(503).json({
+      status: 'error',
+      mode: 'mysql',
+      message: 'CampusCare cannot reach MySQL.',
+    });
+  }
 });
 
 app.post('/api/auth/register', async (req, res) => {

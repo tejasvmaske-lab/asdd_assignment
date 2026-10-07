@@ -48,16 +48,21 @@ Run the full stack using Docker Compose:
 docker compose up --build
 ```
 
-The frontend will be available at http://localhost:5173 and the API at http://localhost:5000.
+The frontend will be available at http://localhost:5173 and the Docker API at http://localhost:5001. The backend waits for the Docker MySQL service to become healthy and does not store data in memory if MySQL is unavailable. Port 5001 is used on the host to avoid colliding with the port used by local development.
+
+To inspect data saved by the Docker Compose app:
+
+```bash
+docker exec -it campuscare-db mysql -u campuscare -pcampuscare123 campus_service_db
+```
+
+Starting the frontend/backend directly with `npm run dev` uses the MySQL server configured in `backend/.env`, which is separate from the MySQL container. Use one run mode consistently when checking records.
 
 ## Admin credentials
 
-Default demo admin account:
+Default admin account:
 
 - Email: admin@campuscare.edu
 - Password: admin123
 
-Default demo student account:
-
-- Email: student@campuscare.edu
-- Password: student123
+Students create accounts using the Register page.
